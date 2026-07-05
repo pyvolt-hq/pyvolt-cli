@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyvolt-cli"
+version = "0.0.1"
+description = "The command-line companion to pyvolt: managed Python deployments on infrastructure you actually own."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Will Abbott", email = "will@digitaloutback.co.uk" },
+]
+maintainers = [
+    { name = "PyVolt HQ", email = "will@digitaloutback.co.uk" },
+]
+keywords = [
+    "deployment",
+    "paas",
+    "python",
+    "django",
+    "flask",
+    "fastapi",
+    "vps",
+    "hetzner",
+    "digitalocean",
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Installation/Setup",
+    "Topic :: System :: Systems Administration",
+]
+
+[project.urls]
+Homepage = "https://pyvolt.com"
+Repository = "https://github.com/pyvolt-hq/pyvolt-cli"
+Issues = "https://github.com/pyvolt-hq/pyvolt-cli/issues"
+
+[project.scripts]
+pyvolt = "pyvolt_cli.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pyvolt_cli"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "pyvolt_cli",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
