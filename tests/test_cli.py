@@ -203,3 +203,63 @@ def test_logout_removes_file(api, tmp_path, monkeypatch):
     result = runner.invoke(app, ["logout"])
     assert result.exit_code == 0
     assert not config.credentials_path().exists()
+
+
+SERVERS = [
+    {"id": 1, "name": "hetzy", "ip_address": "1.2.3.4", "provider": "hetzner", "status": "ready", "connected": True},
+    {"id": 2, "name": "vulty", "ip_address": "5.6.7.8", "provider": "custom", "status": "ready", "connected": True},
+]
+
+
+def test_servers_select_validates_and_persists(api, tmp_path):
+    from pyvolt_cli import config
+
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    bad = runner.invoke(app, ["servers", "select", "nope"])
+    assert bad.exit_code == 1
+    assert "hetzy" in bad.output  # lists real names
+
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    ok = runner.invoke(app, ["servers", "select", "hetzy"])
+    assert ok.exit_code == 0
+    assert config.selected_server() == "hetzy"
+
+    cleared = runner.invoke(app, ["servers", "select", "--clear"])
+    assert cleared.exit_code == 0
+    assert config.selected_server() == ""
+
+
+def test_sticky_server_scopes_resolution(api, monkeypatch):
+    monkeypatch.setenv("PYVOLT_SERVER", "hetzy")
+    route = api.get("/api/v1/apps", params={"server": "hetzy"}).respond(200, json=[APPS[0]])
+    api.get("/api/v1/apps/11/env").respond(200, json=[])
+    result = runner.invoke(app, ["env", "blog", "list"])
+    assert result.exit_code == 0
+    assert route.called
+
+
+def test_server_flag_overrides_sticky(api, monkeypatch):
+    monkeypatch.setenv("PYVOLT_SERVER", "vulty")
+    route = api.get("/api/v1/apps", params={"server": "hetzy"}).respond(200, json=[APPS[0]])
+    api.post("/api/v1/apps/11/deployments").respond(
+        201, json={"id": 9, "status": "queued", "commit_sha": "", "commit_message": "",
+                   "triggered_by": "will", "created_at": "2026-07-14T10:00:00", "duration_seconds": None},
+    )
+    result = runner.invoke(app, ["deploy", "blog", "-s", "hetzy"])
+    assert result.exit_code == 0
+    assert route.called
+
+
+def test_empty_server_scope_hints_servers_cmd(api):
+    api.get("/api/v1/apps", params={"server": "hetzy"}).respond(200, json=[])
+    result = runner.invoke(app, ["logs", "blog", "-s", "hetzy"])
+    assert result.exit_code == 1
+    assert "pyvolt servers" in result.output
+
+
+def test_apps_all_ignores_sticky(api, monkeypatch):
+    monkeypatch.setenv("PYVOLT_SERVER", "hetzy")
+    route = api.get("/api/v1/apps").respond(200, json=APPS)
+    result = runner.invoke(app, ["apps", "--all"])
+    assert result.exit_code == 0
+    assert route.called

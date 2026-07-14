@@ -53,9 +53,16 @@ class Api:
 
     # -- resolution ---------------------------------------------------------
 
-    def resolve_app(self, name: str) -> dict:
-        """Match an app by exact domain, else unambiguous substring."""
-        apps = self.get("/v1/apps")
+    def resolve_app(self, name: str, server: str = "") -> dict:
+        """Match an app by exact domain, else unambiguous substring.
+
+        Resolution is scoped to `server` when given, else to the sticky
+        context from `pyvolt servers select`, else to all your apps."""
+        server = server or config.selected_server()
+        apps = self.get("/v1/apps", params={"server": server} if server else None)
+        scope = f" on [bold]{server}[/bold]" if server else ""
+        if server and not apps:
+            raise fail(f"No apps{scope} — check [bold]pyvolt servers[/bold].")
         exact = [a for a in apps if a["domain"] == name]
         if exact:
             return exact[0]
@@ -64,6 +71,6 @@ class Api:
             return matches[0]
         if not matches:
             known = ", ".join(a["domain"] for a in apps) or "none yet"
-            raise fail(f"No app matches [bold]{name}[/bold]. Your apps: {known}")
+            raise fail(f"No app matches [bold]{name}[/bold]{scope}. Apps{scope}: {known}")
         ambiguous = ", ".join(a["domain"] for a in matches)
-        raise fail(f"[bold]{name}[/bold] is ambiguous: {ambiguous}")
+        raise fail(f"[bold]{name}[/bold] is ambiguous{scope}: {ambiguous}")
