@@ -1,0 +1,205 @@
+"""CLI tests — API mocked with respx, filesystem isolated per-test."""
+from __future__ import annotations
+
+import stat
+
+import pytest
+import respx
+from httpx import Response
+from typer.testing import CliRunner
+
+from pyvolt_cli.app import app
+
+BASE = "https://pyvolt.test"
+runner = CliRunner()
+
+APPS = [
+    {
+        "id": 11, "domain": "blog.example.com", "server": "hetzy", "status": "live",
+        "repo": "acme/blog", "branch": "main",
+        "dashboard_url": f"{BASE}/servers/hetzy/sites/blog/",
+        "site_url": "https://blog.example.com",
+    },
+    {
+        "id": 12, "domain": "shop.example.com", "server": "hetzy", "status": "live",
+        "repo": "acme/shop", "branch": "main",
+        "dashboard_url": f"{BASE}/servers/hetzy/sites/shop/",
+        "site_url": "https://shop.example.com",
+    },
+]
+
+
+@pytest.fixture(autouse=True)
+def _isolated(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PYVOLT_API_URL", BASE)
+    monkeypatch.setenv("PYVOLT_TOKEN", "pyv_test")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+
+@pytest.fixture
+def api():
+    with respx.mock(base_url=BASE) as mock:
+        yield mock
+
+
+def test_not_logged_in(monkeypatch, api):
+    monkeypatch.delenv("PYVOLT_TOKEN")
+    result = runner.invoke(app, ["whoami"])
+    assert result.exit_code == 1
+    assert "pyvolt login" in result.output
+
+
+def test_whoami(api):
+    api.get("/api/v1/me").respond(200, json={"username": "will", "email": "w@x.com"})
+    result = runner.invoke(app, ["whoami"])
+    assert result.exit_code == 0
+    assert "will <w@x.com>" in result.output
+
+
+def test_401_hint(api):
+    api.get("/api/v1/me").respond(401, json={"detail": "Unauthorized"})
+    result = runner.invoke(app, ["whoami"])
+    assert result.exit_code == 1
+    assert "pyvolt login" in result.output
+
+
+def test_apps_table(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    result = runner.invoke(app, ["apps"])
+    assert result.exit_code == 0
+    assert "blog.example.com" in result.output
+    assert "acme/shop" in result.output
+
+
+def test_app_resolution_substring_and_ambiguity(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/env").respond(200, json=[])
+    ok = runner.invoke(app, ["env", "blog", "list"])
+    assert ok.exit_code == 0
+
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    ambiguous = runner.invoke(app, ["env", "example", "list"])
+    assert ambiguous.exit_code == 1
+    assert "ambiguous" in ambiguous.output
+
+
+def test_deploy_conflict(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.post("/api/v1/apps/11/deployments").respond(
+        409, json={"detail": "A deployment is already queued or running."}
+    )
+    result = runner.invoke(app, ["deploy", "blog"])
+    assert result.exit_code == 1
+    assert "already queued" in result.output
+
+
+def test_deploy_follow_streams_until_terminal(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.post("/api/v1/apps/11/deployments").respond(
+        201, json={"id": 77, "status": "queued", "commit_sha": "", "commit_message": "",
+                   "triggered_by": "will", "created_at": "2026-07-14T10:00:00", "duration_seconds": None},
+    )
+    log = api.get("/api/v1/deployments/77/log")
+    log.side_effect = [
+        Response(200, json={"status": "running", "offset": 5, "chunk": "one\n"}),
+        Response(200, json={"status": "succeeded", "offset": 9, "chunk": "two\n"}),
+    ]
+    result = runner.invoke(app, ["deploy", "blog", "--follow"])
+    assert result.exit_code == 0
+    assert "one" in result.output and "two" in result.output
+    assert "Deployed blog.example.com" in result.output
+
+
+def test_env_set_validates_pairs(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    result = runner.invoke(app, ["env", "blog", "set", "NOEQUALS"])
+    assert result.exit_code == 1
+    assert "KEY=VALUE" in result.output
+
+
+def test_env_set_posts_each_pair(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    route = api.post("/api/v1/apps/11/env").respond(
+        200, json={"key": "A", "value": "1", "is_secret": False}
+    )
+    result = runner.invoke(app, ["env", "blog", "set", "A=1", "B=2"])
+    assert result.exit_code == 0
+    assert route.call_count == 2
+
+
+def test_env_list_masks_secrets(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/env").respond(200, json=[
+        {"key": "SECRET_KEY", "value": "shh", "is_secret": True},
+        {"key": "DEBUG", "value": "0", "is_secret": False},
+    ])
+    result = runner.invoke(app, ["env", "blog", "list"])
+    assert "shh" not in result.output
+    assert "••" in result.output
+    assert "DEBUG" in result.output
+
+
+def test_ps_restart_resolves_name_to_id(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/processes").respond(200, json=[
+        {"id": 5, "name": "worker", "kind": "worker", "command": "celery ...", "state": "active", "exit": ""},
+    ])
+    restart = api.post("/api/v1/apps/11/processes/5/restart").respond(200, json={"restarted": "worker"})
+    result = runner.invoke(app, ["ps", "blog", "restart", "worker"])
+    assert result.exit_code == 0
+    assert restart.called
+
+
+def test_logs(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/logs").respond(200, json={"unit": "u", "lines": ["alpha", "beta"]})
+    result = runner.invoke(app, ["logs", "blog", "-n", "50"])
+    assert result.exit_code == 0
+    assert "alpha" in result.output
+
+
+def test_login_device_flow(api, monkeypatch, tmp_path):
+    monkeypatch.delenv("PYVOLT_TOKEN")
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+    api.post("/api/cli/auth/start").respond(200, json={
+        "device_code": "dc", "user_code": "abcd1234",
+        "verification_uri": f"{BASE}/cli/authorize/abcd1234/",
+        "expires_in": 600, "interval": 2,
+    })
+    poll = api.post("/api/cli/auth/poll")
+    poll.side_effect = [
+        Response(200, json={"status": "pending"}),
+        Response(200, json={"status": "approved", "token": "pyv_new"}),
+    ]
+    result = runner.invoke(app, ["login"])
+    assert result.exit_code == 0
+    assert opened == [f"{BASE}/cli/authorize/abcd1234/"]
+    creds = tmp_path / "pyvolt" / "credentials.toml"
+    assert 'token = "pyv_new"' in creds.read_text()
+    assert stat.S_IMODE(creds.stat().st_mode) == 0o600
+
+
+def test_login_denied(api, monkeypatch):
+    monkeypatch.delenv("PYVOLT_TOKEN")
+    monkeypatch.setattr("webbrowser.open", lambda url: None)
+    api.post("/api/cli/auth/start").respond(200, json={
+        "device_code": "dc", "user_code": "abcd1234",
+        "verification_uri": f"{BASE}/cli/authorize/abcd1234/",
+        "expires_in": 600, "interval": 2,
+    })
+    api.post("/api/cli/auth/poll").respond(200, json={"status": "denied"})
+    result = runner.invoke(app, ["login"])
+    assert result.exit_code == 1
+    assert "denied" in result.output
+
+
+def test_logout_removes_file(api, tmp_path, monkeypatch):
+    from pyvolt_cli import config
+
+    config.save("pyv_x", BASE)
+    assert config.credentials_path().exists()
+    result = runner.invoke(app, ["logout"])
+    assert result.exit_code == 0
+    assert not config.credentials_path().exists()

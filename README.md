@@ -1,36 +1,36 @@
 # pyvolt-cli
 
-The terminal companion to [pyvolt](https://pyvolt.com): managed Python deployments on infrastructure you actually own.
-
-## Status
-
-This is a **placeholder release (0.0.1)**. It installs the `pyvolt` command onto `$PATH` and prints a "coming soon" banner. Real subcommands (`pyvolt deploy`, `pyvolt logs`, `pyvolt scale`, and friends) land in a future release.
-
-Follow along at:
-
-- Website: <https://pyvolt.com>
-- Repository: <https://github.com/pyvolt-hq/pyvolt-cli>
-- Issues: <https://github.com/pyvolt-hq/pyvolt-cli/issues>
-
-## Install
+The command-line companion to [Pyvolt](https://pyvolt.com) — managed Python
+deployments on infrastructure you actually own.
 
 ```bash
-pip install pyvolt-cli
+uv tool install pyvolt-cli   # or: pipx install pyvolt-cli
+pyvolt login                 # browser approval, no password in the terminal
+pyvolt deploy myapp --follow
 ```
 
-The distribution name on PyPI is `pyvolt-cli`; the installed command on your `$PATH` is `pyvolt`.
+| Command | What it does |
+|---|---|
+| `pyvolt login` / `logout` / `whoami` | Device-flow auth (token stored in `~/.config/pyvolt/`, mode 600) |
+| `pyvolt servers` / `pyvolt apps` | Inventory with live status |
+| `pyvolt deploy APP [--follow]` | Trigger a deployment, optionally streaming the log |
+| `pyvolt deployments APP` | Recent deployment history |
+| `pyvolt env APP list\|set K=V…\|rm K` | Environment variables — pushed and app restarted |
+| `pyvolt ps APP [restart NAME]` | Background processes with live systemd state |
+| `pyvolt logs APP [-p NAME] [-n N]` | Tail the app's journal |
+| `pyvolt open APP` | Jump to the dashboard |
 
-## Verify
+`APP` is the app's domain, or any unambiguous fragment of it.
+
+Full guide: [pyvolt.com/docs/cli](https://pyvolt.com/docs/cli/) · HTTP API:
+[pyvolt.com/api/docs](https://pyvolt.com/api/docs)
+
+## Development
 
 ```bash
-pyvolt
+uv sync
+uv run pytest
 ```
-
-Prints the version banner. If you see it, the entry point is wired correctly.
-
-## Requires
-
-Python 3.10 or newer.
 
 ## License
 
