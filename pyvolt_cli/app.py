@@ -103,67 +103,26 @@ def logout():
 def whoami():
     """Show the authenticated account."""
     me = Api().get("/v1/me")
-    ctx = f" · server context: {config.selected_server()}" if config.selected_server() else ""
-    console.print(f"{me['username']} <{me['email']}> @ {config.api_url()}{ctx}")
+    console.print(f"{me['username']} <{me['email']}> @ {config.api_url()}")
 
 
 # ---- read-only inventory ------------------------------------------------------
 
-def _server_opt():
-    return typer.Option(
-        "", "--server", "-s",
-        help="Scope to one server (overrides `pyvolt servers select`).",
-    )
-
-
-servers_app = typer.Typer(help="List servers; `select` sets the sticky server context.")
-app.add_typer(servers_app, name="servers")
-
-
-@servers_app.callback(invoke_without_command=True)
-def _servers_main(ctx: typer.Context):
+@app.command()
+def servers():
     """List your servers."""
-    if ctx.invoked_subcommand is not None:
-        return
-    selected = config.selected_server()
-    t = _table("", "NAME", "IP", "PROVIDER", "STATUS", "CONNECTED")
+    t = _table("NAME", "IP", "PROVIDER", "STATUS", "CONNECTED")
     for s in Api().get("/v1/servers"):
         t.add_row(
-            "[cyan]›[/]" if s["name"] == selected else "",
             s["name"], s["ip_address"], s["provider"], _status(s["status"]),
             "[green]yes[/]" if s["connected"] else "[red]no[/]",
         )
     console.print(t)
 
 
-@servers_app.command("select")
-def servers_select(
-    name: str = typer.Argument("", metavar="[SERVER]"),
-    clear: bool = typer.Option(False, "--clear", help="Forget the selected server."),
-):
-    """Scope later commands to one server (until `--clear`)."""
-    if clear:
-        config.set_server("")
-        console.print("[green]✓[/green] Server context cleared — commands search all servers again.")
-        return
-    if not name:
-        current = config.selected_server()
-        console.print(f"Selected server: [bold]{current}[/bold]" if current else "No server selected.")
-        return
-    names = [s["name"] for s in Api().get("/v1/servers")]
-    if name not in names:
-        raise fail(f"No server named [bold]{name}[/bold]. Your servers: {', '.join(names) or 'none yet'}")
-    config.set_server(name)
-    console.print(f"[green]✓[/green] Commands now scoped to [bold]{name}[/bold] (undo: pyvolt servers select --clear)")
-
-
 @app.command()
-def apps(
-    server: str = _server_opt(),
-    all_: bool = typer.Option(False, "--all", help="Ignore the selected server context."),
-):
-    """List your apps (within the selected server context, if any)."""
-    server = "" if all_ else (server or config.selected_server())
+def apps(server: str = typer.Option("", "--server", help="Filter by server name.")):
+    """List your apps."""
     t = _table("DOMAIN", "SERVER", "STATUS", "REPO", "BRANCH")
     for a in Api().get("/v1/apps", params={"server": server} if server else None):
         t.add_row(a["domain"], a["server"], _status(a["status"]), a["repo"], a["branch"])
@@ -190,11 +149,10 @@ def _follow(api: Api, deployment_id: int) -> str:
 def deploy(
     app_name: str = typer.Argument(..., metavar="DOMAIN"),
     follow: bool = typer.Option(False, "--follow", "-f", help="Stream the deploy log."),
-    server: str = _server_opt(),
 ):
     """Trigger a deployment."""
     api = Api()
-    site = api.resolve_app(app_name, server)
+    site = api.resolve_app(app_name)
     r = api.post(f"/v1/apps/{site['id']}/deployments", ok=(201, 409))
     if r.status_code == 409:
         raise fail(r.json()["detail"])
@@ -210,13 +168,10 @@ def deploy(
 
 
 @app.command()
-def deployments(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
-    server: str = _server_opt(),
-):
+def deployments(app_name: str = typer.Argument(..., metavar="DOMAIN")):
     """Recent deployments for an app."""
     api = Api()
-    site = api.resolve_app(app_name, server)
+    site = api.resolve_app(app_name)
     t = _table("WHEN", "STATUS", "COMMIT", "MESSAGE", "BY", "TOOK")
     for d in api.get(f"/v1/apps/{site['id']}/deployments"):
         took = f"{d['duration_seconds']}s" if d["duration_seconds"] is not None else ""
@@ -235,19 +190,15 @@ app.add_typer(env_app, name="env")
 
 
 @env_app.callback()
-def _env_main(
-    ctx: typer.Context,
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
-    server: str = _server_opt(),
-):
-    ctx.obj = (app_name, server)
+def _env_main(ctx: typer.Context, app_name: str = typer.Argument(..., metavar="DOMAIN")):
+    ctx.obj = app_name
 
 
 @env_app.command("list")
 def env_list(ctx: typer.Context):
     """Show the app's variables (secret values masked)."""
     api = Api()
-    site = api.resolve_app(*ctx.obj)
+    site = api.resolve_app(ctx.obj)
     t = _table("KEY", "VALUE")
     for row in api.get(f"/v1/apps/{site['id']}/env"):
         t.add_row(row["key"], "••••••••" if row["is_secret"] else row["value"])
@@ -258,7 +209,7 @@ def env_list(ctx: typer.Context):
 def env_set(ctx: typer.Context, pairs: list[str] = typer.Argument(..., metavar="KEY=VALUE...")):
     """Set one or more variables — pushes the .env and restarts the app."""
     api = Api()
-    site = api.resolve_app(*ctx.obj)
+    site = api.resolve_app(ctx.obj)
     for pair in pairs:
         if "=" not in pair:
             raise fail(f"Expected KEY=VALUE, got [bold]{pair}[/bold]")
@@ -271,7 +222,7 @@ def env_set(ctx: typer.Context, pairs: list[str] = typer.Argument(..., metavar="
 def env_rm(ctx: typer.Context, key: str):
     """Remove a variable — pushes the .env and restarts the app."""
     api = Api()
-    site = api.resolve_app(*ctx.obj)
+    site = api.resolve_app(ctx.obj)
     r = api.delete(f"/v1/apps/{site['id']}/env/{key}")
     if not r["deleted"]:
         raise fail(f"[bold]{key}[/bold] is not set.")
@@ -312,11 +263,10 @@ def logs(
     app_name: str = typer.Argument(..., metavar="DOMAIN"),
     process: str = typer.Option("", "--process", "-p", help="A named background process instead of the web app."),
     lines: int = typer.Option(100, "--lines", "-n", help="How many lines (max 500)."),
-    server: str = _server_opt(),
 ):
     """Tail the app's journal."""
     api = Api()
-    site = api.resolve_app(app_name, server)
+    site = api.resolve_app(app_name)
     params = {"lines": lines}
     if process:
         params["process"] = process
@@ -328,11 +278,8 @@ def logs(
 
 
 @app.command("open")
-def open_(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
-    server: str = _server_opt(),
-):
+def open_(app_name: str = typer.Argument(..., metavar="DOMAIN")):
     """Open the app's dashboard page in your browser."""
-    site = Api().resolve_app(app_name, server)
+    site = Api().resolve_app(app_name)
     console.print(f"Opening {site['dashboard_url']}")
     webbrowser.open(site["dashboard_url"])
