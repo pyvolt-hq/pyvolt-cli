@@ -13,6 +13,11 @@ on:
     paths: ['pyproject.toml']
   workflow_dispatch:
 
+# contents: write is for the release-tag push at the end — the default
+# GITHUB_TOKEN in this org is read-only and 403s on it otherwise.
+permissions:
+  contents: write
+
 jobs:
   publish_pypi:
     runs-on: ubuntu-latest
