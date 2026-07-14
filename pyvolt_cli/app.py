@@ -147,7 +147,7 @@ def _follow(api: Api, deployment_id: int) -> str:
 
 @app.command()
 def deploy(
-    app_name: str = typer.Argument(..., metavar="APP"),
+    app_name: str = typer.Argument(..., metavar="DOMAIN"),
     follow: bool = typer.Option(False, "--follow", "-f", help="Stream the deploy log."),
 ):
     """Trigger a deployment."""
@@ -168,7 +168,7 @@ def deploy(
 
 
 @app.command()
-def deployments(app_name: str = typer.Argument(..., metavar="APP")):
+def deployments(app_name: str = typer.Argument(..., metavar="DOMAIN")):
     """Recent deployments for an app."""
     api = Api()
     site = api.resolve_app(app_name)
@@ -190,7 +190,7 @@ app.add_typer(env_app, name="env")
 
 
 @env_app.callback()
-def _env_main(ctx: typer.Context, app_name: str = typer.Argument(..., metavar="APP")):
+def _env_main(ctx: typer.Context, app_name: str = typer.Argument(..., metavar="DOMAIN")):
     ctx.obj = app_name
 
 
@@ -233,7 +233,7 @@ def env_rm(ctx: typer.Context, key: str):
 
 @app.command()
 def ps(
-    app_name: str = typer.Argument(..., metavar="APP"),
+    app_name: str = typer.Argument(..., metavar="DOMAIN"),
     action: str = typer.Argument("", metavar="[restart]"),
     process: str = typer.Argument("", metavar="[NAME]"),
 ):
@@ -243,7 +243,7 @@ def ps(
     procs = api.get(f"/v1/apps/{site['id']}/processes")
     if action:
         if action != "restart" or not process:
-            raise fail("Usage: pyvolt ps APP restart NAME")
+            raise fail("Usage: pyvolt ps DOMAIN restart NAME")
         match = [p for p in procs if p["name"] == process]
         if not match:
             known = ", ".join(p["name"] for p in procs) or "none"
@@ -260,7 +260,7 @@ def ps(
 
 @app.command()
 def logs(
-    app_name: str = typer.Argument(..., metavar="APP"),
+    app_name: str = typer.Argument(..., metavar="DOMAIN"),
     process: str = typer.Option("", "--process", "-p", help="A named background process instead of the web app."),
     lines: int = typer.Option(100, "--lines", "-n", help="How many lines (max 500)."),
 ):
@@ -278,7 +278,7 @@ def logs(
 
 
 @app.command("open")
-def open_(app_name: str = typer.Argument(..., metavar="APP")):
+def open_(app_name: str = typer.Argument(..., metavar="DOMAIN")):
     """Open the app's dashboard page in your browser."""
     site = Api().resolve_app(app_name)
     console.print(f"Opening {site['dashboard_url']}")

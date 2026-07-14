@@ -13,14 +13,15 @@ pyvolt deploy myapp --follow
 |---|---|
 | `pyvolt login` / `logout` / `whoami` | Device-flow auth (token stored in `~/.config/pyvolt/`, mode 600) |
 | `pyvolt servers` / `pyvolt apps` | Inventory with live status |
-| `pyvolt deploy APP [--follow]` | Trigger a deployment, optionally streaming the log |
-| `pyvolt deployments APP` | Recent deployment history |
-| `pyvolt env APP list\|set K=V…\|rm K` | Environment variables — pushed and app restarted |
-| `pyvolt ps APP [restart NAME]` | Background processes with live systemd state |
-| `pyvolt logs APP [-p NAME] [-n N]` | Tail the app's journal |
-| `pyvolt open APP` | Jump to the dashboard |
+| `pyvolt deploy DOMAIN [--follow]` | Trigger a deployment, optionally streaming the log |
+| `pyvolt deployments DOMAIN` | Recent deployment history |
+| `pyvolt env DOMAIN list\|set K=V…\|rm K` | Environment variables — pushed and app restarted |
+| `pyvolt ps DOMAIN [restart NAME]` | Background processes with live systemd state |
+| `pyvolt logs DOMAIN [-p NAME] [-n N]` | Tail the app's journal |
+| `pyvolt open DOMAIN` | Jump to the dashboard |
 
-`APP` is the app's domain, or any unambiguous fragment of it.
+`DOMAIN` is the app's domain, or any unambiguous fragment of it — domains
+are unique across the platform, so no server qualifier is ever needed.
 
 Full guide: [pyvolt.com/docs/cli](https://pyvolt.com/docs/cli/) · HTTP API:
 [pyvolt.com/api/docs](https://pyvolt.com/api/docs)
