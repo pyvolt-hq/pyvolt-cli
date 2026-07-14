@@ -1,0 +1,60 @@
+name: "Publish to PyPI on version bump"
+run-name: "Publish pyvolt-cli to PyPI (@${{ github.actor }})"
+
+# Publishes when pyproject.toml's version changes on main (direct push or PR
+# merge), but only if that version isn't already on PyPI — safe to re-run,
+# and commits that don't bump the version are ignored. Manual dispatch stays
+# available. Tests must pass before anything is built.
+# Requires a PYPI_TOKEN repository secret.
+
+on:
+  push:
+    branches: [main]
+    paths: ['pyproject.toml']
+  workflow_dispatch:
+
+jobs:
+  publish_pypi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Read pyproject version
+        id: ver
+        run: echo "version=$(sed -nE 's/^version = \"(.+)\"/\1/p' pyproject.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Check PyPI for this version
+        id: check
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/pyvolt-cli/${{ steps.ver.outputs.version }}/json")
+          echo "Version ${{ steps.ver.outputs.version }} -> PyPI returns $status"
+          if [ "$status" = "404" ]; then echo "publish=true" >> "$GITHUB_OUTPUT"; else echo "publish=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Install uv
+        if: steps.check.outputs.publish == 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.13'
+
+      - name: Run tests
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          uv sync
+          uv run pytest -q
+
+      - name: Build
+        if: steps.check.outputs.publish == 'true'
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.publish == 'true'
+        run: uv publish --token "${{ secrets.PYPI_TOKEN }}"
+
+      - name: Tag the release
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag "v${{ steps.ver.outputs.version }}"
+          git push origin "v${{ steps.ver.outputs.version }}"

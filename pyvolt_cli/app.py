@@ -277,6 +277,47 @@ def logs(
         console.out(line, highlight=False)
 
 
+# ---- fail2ban -------------------------------------------------------------------
+
+@app.command()
+def bans(server: str = typer.Argument(..., metavar="SERVER")):
+    """List IPs banned by fail2ban on a server (flags your own IP)."""
+    api = Api()
+    srv = api.resolve_server(server)
+    r = api.get(f"/v1/servers/{srv['id']}/bans")
+    if not r["running"]:
+        raise fail("fail2ban is not active on this server.")
+    if not r["banned"]:
+        console.print("[green]✓[/green] No IPs are currently banned.")
+    else:
+        t = _table("BANNED IP", "")
+        for ip in r["banned"]:
+            t.add_row(ip, "[yellow]← this is you[/]" if ip == r["your_ip"] else "")
+        console.print(t)
+    console.print(f"[dim]Your public IP: {r['your_ip']}[/dim]")
+    if r["your_ip"] in r["banned"]:
+        console.print(f"Unban yourself:  [bold]pyvolt unban {srv['name']} --me[/bold]")
+
+
+@app.command()
+def unban(
+    server: str = typer.Argument(..., metavar="SERVER"),
+    ip: str = typer.Argument("", metavar="[IP]"),
+    me: bool = typer.Option(False, "--me", help="Unban your own public IP (as the API sees it)."),
+):
+    """Lift a fail2ban ban — banned yourself? `pyvolt unban SERVER --me`."""
+    api = Api()
+    srv = api.resolve_server(server)
+    if me:
+        ip = api.get(f"/v1/servers/{srv['id']}/bans")["your_ip"]
+    if not ip:
+        raise fail("Give an IP, or use [bold]--me[/bold] to unban your own.")
+    r = api.post(f"/v1/servers/{srv['id']}/bans/unban", ok=(200, 400), json={"ip": ip})
+    if r.status_code == 400:
+        raise fail(r.json()["detail"])
+    console.print(f"[green]✓[/green] Unbanned {ip}")
+
+
 @app.command("open")
 def open_(app_name: str = typer.Argument(..., metavar="DOMAIN")):
     """Open the app's dashboard page in your browser."""

@@ -53,6 +53,21 @@ class Api:
 
     # -- resolution ---------------------------------------------------------
 
+    def resolve_server(self, name: str) -> dict:
+        """Match a server by exact name, else unambiguous substring."""
+        servers = self.get("/v1/servers")
+        exact = [s for s in servers if s["name"] == name]
+        if exact:
+            return exact[0]
+        matches = [s for s in servers if name.lower() in s["name"].lower()]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            known = ", ".join(s["name"] for s in servers) or "none yet"
+            raise fail(f"No server matches [bold]{name}[/bold]. Your servers: {known}")
+        ambiguous = ", ".join(s["name"] for s in matches)
+        raise fail(f"[bold]{name}[/bold] is ambiguous: {ambiguous}")
+
     def resolve_app(self, name: str) -> dict:
         """Match an app by exact domain, else unambiguous substring."""
         apps = self.get("/v1/apps")

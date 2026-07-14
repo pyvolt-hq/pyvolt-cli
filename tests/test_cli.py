@@ -203,3 +203,62 @@ def test_logout_removes_file(api, tmp_path, monkeypatch):
     result = runner.invoke(app, ["logout"])
     assert result.exit_code == 0
     assert not config.credentials_path().exists()
+
+
+# ---- bans / unban ---------------------------------------------------------------
+
+SERVERS = [
+    {"id": 7, "name": "hetzy", "ip_address": "1.2.3.4", "provider": "hetzner",
+     "status": "ready", "connected": True},
+]
+
+BANS = {
+    "running": True, "whitelisted": "yes",
+    "banned": ["92.118.39.62", "82.1.1.10"], "your_ip": "82.1.1.10",
+}
+
+
+def test_bans_lists_and_flags_own_ip(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.get("/api/v1/servers/7/bans").respond(200, json=BANS)
+    result = runner.invoke(app, ["bans", "hetzy"])
+    assert result.exit_code == 0
+    assert "92.118.39.62" in result.output
+    assert "this is you" in result.output
+    assert "pyvolt unban hetzy --me" in result.output
+
+
+def test_bans_when_fail2ban_inactive(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.get("/api/v1/servers/7/bans").respond(
+        200, json={**BANS, "running": False, "banned": []}
+    )
+    result = runner.invoke(app, ["bans", "hetzy"])
+    assert result.exit_code == 1
+    assert "not active" in result.output
+
+
+def test_unban_explicit_ip(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.post("/api/v1/servers/7/bans/unban").respond(200, json={"unbanned": "92.118.39.62"})
+    result = runner.invoke(app, ["unban", "hetzy", "92.118.39.62"])
+    assert result.exit_code == 0
+    assert "Unbanned 92.118.39.62" in result.output
+
+
+def test_unban_me_resolves_own_ip(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.get("/api/v1/servers/7/bans").respond(200, json=BANS)
+    route = api.post("/api/v1/servers/7/bans/unban").respond(200, json={"unbanned": "82.1.1.10"})
+    result = runner.invoke(app, ["unban", "hetzy", "--me"])
+    assert result.exit_code == 0
+    assert "Unbanned 82.1.1.10" in result.output
+    import json as _json
+    assert _json.loads(route.calls[0].request.content) == {"ip": "82.1.1.10"}
+
+
+def test_unban_requires_ip_or_me(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    result = runner.invoke(app, ["unban", "hetzy"])
+    assert result.exit_code == 1
+    assert "--me" in result.output
