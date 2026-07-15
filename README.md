@@ -20,6 +20,7 @@ pyvolt deploy myapp --follow
 | `pyvolt logs DOMAIN [-p NAME] [-n N]` | Tail the app's journal |
 | `pyvolt bans SERVER` | IPs banned by fail2ban, your own flagged |
 | `pyvolt unban SERVER [IP] [--me]` | Lift a ban — `--me` unbans your own IP, even while it's banned |
+| `pyvolt ssh SERVER [--app DOMAIN]` | Open a shell on the server (as the `pyvolt` user); `--app` cds into the app dir |
 | `pyvolt open DOMAIN` | Jump to the dashboard |
 
 `DOMAIN` is the app's domain, or any unambiguous fragment of it — domains
