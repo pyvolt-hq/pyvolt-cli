@@ -209,8 +209,36 @@ def test_logout_removes_file(api, tmp_path, monkeypatch):
 
 SERVERS = [
     {"id": 7, "name": "hetzy", "ip_address": "1.2.3.4", "provider": "hetzner",
-     "status": "ready", "connected": True},
+     "status": "ready", "connected": True, "ssh_port": 22, "ssh_user": "pyvolt"},
 ]
+
+
+def test_ssh_execs_ssh_with_resolved_host(api, monkeypatch):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    called = {}
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/ssh")
+    monkeypatch.setattr("os.execvp", lambda file, args: called.setdefault("args", args))
+    runner.invoke(app, ["ssh", "hetzy"])
+    assert called["args"] == ["ssh", "-p", "22", "pyvolt@1.2.3.4"]
+
+
+def test_ssh_app_flag_cds_into_app_dir(api, monkeypatch):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    called = {}
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/ssh")
+    monkeypatch.setattr("os.execvp", lambda file, args: called.setdefault("args", args))
+    runner.invoke(app, ["ssh", "hetzy", "--app", "blog"])
+    assert "-t" in called["args"]
+    assert any("cd sites/blog.example.com/repo" in a for a in called["args"])
+
+
+def test_ssh_refuses_non_ready_server(api, monkeypatch):
+    api.get("/api/v1/servers").respond(200, json=[{**SERVERS[0], "status": "provisioning"}])
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/ssh")
+    result = runner.invoke(app, ["ssh", "hetzy"])
+    assert result.exit_code == 1
+    assert "not ready" in result.output
 
 BANS = {
     "running": True, "whitelisted": "yes",

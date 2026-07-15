@@ -121,6 +121,35 @@ def servers():
 
 
 @app.command()
+def ssh(
+    server: str = typer.Argument(..., metavar="SERVER"),
+    app_name: str = typer.Option("", "--app", "-a", help="cd into this app's directory on connect."),
+):
+    """Open an SSH shell on a server (as the pyvolt app-user).
+
+    A thin convenience wrapper: it resolves the host/port from the API and
+    execs your local `ssh`, so your own key must be on the box — add it under
+    Account → SSH Keys (or `pyvolt` on the web dashboard)."""
+    import os
+    import shutil
+
+    if not shutil.which("ssh"):
+        raise fail("No `ssh` client found on PATH.")
+    api = Api()
+    srv = api.resolve_server(server)
+    if srv["status"] != "ready":
+        raise fail(f"{srv['name']} is {srv['status']}, not ready.")
+    target = f"{srv.get('ssh_user', 'pyvolt')}@{srv['ip_address']}"
+    args = ["ssh", "-p", str(srv.get("ssh_port", 22)), target]
+    if app_name:
+        site = api.resolve_app(app_name)
+        # Drop into the app's checkout, then hand over an interactive shell.
+        args += ["-t", f"cd sites/{site['domain']}/repo 2>/dev/null; exec \"$SHELL\" -l"]
+    console.print(f"[dim]Connecting to {target}…[/dim]")
+    os.execvp("ssh", args)
+
+
+@app.command()
 def apps(server: str = typer.Option("", "--server", help="Filter by server name.")):
     """List your apps."""
     t = _table("DOMAIN", "SERVER", "STATUS", "REPO", "BRANCH")
