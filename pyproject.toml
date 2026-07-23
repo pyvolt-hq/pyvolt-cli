@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyvolt-cli"
-version = "0.3.0"
+version = "0.3.1"
 description = "The command-line companion to Pyvolt: managed Python deployments on infrastructure you actually own."
 readme = "README.md"
 license = { text = "MIT" }

@@ -282,6 +282,17 @@ def env_list(ctx: typer.Context):
     console.print(t)
 
 
+@env_app.command("get")
+def env_get(ctx: typer.Context, key: str):
+    """Show one variable's value — unmasked, since it's your own secret."""
+    api = Api()
+    site = api.resolve_app(ctx.obj)
+    row = api.get(f"/v1/apps/{site['id']}/env/{key}")
+    if _emit(row):
+        return
+    console.print(row["value"])
+
+
 @env_app.command("set")
 def env_set(ctx: typer.Context, pairs: list[str] = typer.Argument(..., metavar="KEY=VALUE...")):
     """Set one or more variables — pushes the .env and restarts the app."""

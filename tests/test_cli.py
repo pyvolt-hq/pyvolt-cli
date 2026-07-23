@@ -111,6 +111,16 @@ def test_deploy_follow_streams_until_terminal(api):
     assert "Deployed blog.example.com" in result.output
 
 
+def test_env_get_prints_value(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/env/SECRET_KEY").respond(
+        200, json={"key": "SECRET_KEY", "value": "s3kr3t", "is_secret": True}
+    )
+    result = runner.invoke(app, ["env", "blog", "get", "SECRET_KEY"])
+    assert result.exit_code == 0
+    assert "s3kr3t" in result.output
+
+
 def test_env_set_validates_pairs(api):
     api.get("/api/v1/apps").respond(200, json=APPS)
     result = runner.invoke(app, ["env", "blog", "set", "NOEQUALS"])

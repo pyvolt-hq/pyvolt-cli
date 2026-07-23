@@ -15,7 +15,7 @@ pyvolt deploy myapp --follow
 | `pyvolt servers` / `pyvolt apps` | Inventory with live status |
 | `pyvolt deploy DOMAIN [--follow]` | Trigger a deployment, optionally streaming the log |
 | `pyvolt deployments DOMAIN` | Recent deployment history |
-| `pyvolt env DOMAIN list\|set K=V…\|rm K` | Environment variables — pushed and app restarted |
+| `pyvolt env DOMAIN list\|get K\|set K=V…\|rm K` | Environment variables — pushed and app restarted |
 | `pyvolt ps DOMAIN [restart NAME]` | Background processes with live systemd state |
 | `pyvolt logs DOMAIN [-p NAME] [-n N]` | Tail the app's journal |
 | `pyvolt bans SERVER` | IPs banned by fail2ban, your own flagged |
