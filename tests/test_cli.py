@@ -256,6 +256,27 @@ BANS = {
 }
 
 
+def test_metrics_shows_snapshot(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.get("/api/v1/servers/7/metrics").respond(200, json={
+        "cpu_percent": 12.5, "memory_percent": 40.0, "disk_percent": 55.0,
+        "net_in_bytes": 1500000, "net_out_bytes": 2500000, "at": "2026-07-23T07:00:00",
+    })
+    result = runner.invoke(app, ["metrics", "hetzy"])
+    assert result.exit_code == 0
+    assert "55%" in result.output and "1.5 MB" in result.output  # disk + net formatting
+
+def test_metrics_none_yet(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.get("/api/v1/servers/7/metrics").respond(200, json={
+        "cpu_percent": None, "memory_percent": None, "disk_percent": None,
+        "net_in_bytes": 0, "net_out_bytes": 0, "at": None,
+    })
+    result = runner.invoke(app, ["metrics", "hetzy"])
+    assert result.exit_code == 0
+    assert "No metrics collected yet" in result.output
+
+
 def test_bans_lists_and_flags_own_ip(api):
     api.get("/api/v1/servers").respond(200, json=SERVERS)
     api.get("/api/v1/servers/7/bans").respond(200, json=BANS)

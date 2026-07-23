@@ -18,6 +18,7 @@ pyvolt deploy myapp --follow
 | `pyvolt env DOMAIN list\|get K\|set K=V…\|rm K` | Environment variables — pushed and app restarted |
 | `pyvolt ps DOMAIN [restart NAME]` | Background processes with live systemd state |
 | `pyvolt logs DOMAIN [-p NAME] [-n N]` | Tail the app's journal |
+| `pyvolt metrics SERVER` | Latest CPU / memory / disk / network snapshot |
 | `pyvolt bans SERVER` | IPs banned by fail2ban, your own flagged |
 | `pyvolt unban SERVER [IP] [--me]` | Lift a ban — `--me` unbans your own IP, even while it's banned |
 | `pyvolt ssh SERVER [--app DOMAIN]` | Open a shell on the server (as the `pyvolt` user); `--app` cds into the app dir |

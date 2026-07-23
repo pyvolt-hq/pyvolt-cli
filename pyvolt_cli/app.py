@@ -369,6 +369,28 @@ def logs(
         console.out(line, highlight=False)
 
 
+@app.command()
+def metrics(server: str = typer.Argument(..., metavar="SERVER")):
+    """Latest CPU / memory / disk / network snapshot for a server."""
+    api = Api()
+    srv = api.resolve_server(server)
+    m = api.get(f"/v1/servers/{srv['id']}/metrics")
+    if _emit(m):
+        return
+    if m["at"] is None:
+        console.print("[yellow]No metrics collected yet[/yellow] — they land a few minutes after provisioning.")
+        return
+    pct = lambda v: f"{v:.0f}%" if v is not None else "-"  # noqa: E731
+    t = _table("METRIC", "VALUE")
+    t.add_row("CPU", pct(m["cpu_percent"]))
+    t.add_row("Memory", pct(m["memory_percent"]))
+    t.add_row("Disk", pct(m["disk_percent"]))
+    t.add_row("Net in", f"{m['net_in_bytes'] / 1e6:.1f} MB")
+    t.add_row("Net out", f"{m['net_out_bytes'] / 1e6:.1f} MB")
+    console.print(t)
+    console.print(f"[dim]as of {m['at']}[/dim]")
+
+
 # ---- fail2ban -------------------------------------------------------------------
 
 @app.command()
