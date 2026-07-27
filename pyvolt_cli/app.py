@@ -171,9 +171,18 @@ def ssh(
     os.execvp("ssh", args)
 
 
-@app.command()
-def apps(server: str = typer.Option("", "--server", help="Filter by server name.")):
+apps_app = typer.Typer(help="List your apps; `pyvolt apps create` makes a new one.")
+app.add_typer(apps_app, name="apps")
+
+
+@apps_app.callback(invoke_without_command=True)
+def apps(
+    ctx: typer.Context,
+    server: str = typer.Option("", "--server", help="Filter by server name."),
+):
     """List your apps."""
+    if ctx.invoked_subcommand is not None:
+        return
     data = Api().get("/v1/apps", params={"server": server} if server else None)
     if _emit(data):
         return
@@ -181,6 +190,101 @@ def apps(server: str = typer.Option("", "--server", help="Filter by server name.
     for a in data:
         t.add_row(a["domain"], a["server"], _status(a["status"]), a["repo"], a["branch"])
     console.print(t)
+
+
+@apps_app.command("create")
+def apps_create(
+    server: str = typer.Option(..., "--server", "-s", metavar="SERVER", help="Server to create the app on."),
+    domain: str = typer.Option(..., "--domain", "-d", help="Subdomain prefix (no dots — becomes <prefix>.preview.pyvolt.com) or a full custom domain."),
+    repo: str = typer.Option("", "--repo", "-r", metavar="OWNER/REPO", help="GitHub repository, resolved through your connection."),
+    repo_url: str = typer.Option("", "--repo-url", help="Raw git URL for repos outside a GitHub connection."),
+    branch: str = typer.Option("main", "--branch", "-b", help="Branch deploys ship from."),
+    path: str = typer.Option("", "--path", help="Project directory inside the repo (monorepos)."),
+    env: list[str] = typer.Option([], "--env", "-e", metavar="KEY=VALUE", help="Create-time env var (repeatable)."),
+    serve_command: str = typer.Option("", "--serve-command", help="Override the detected start command."),
+    release_command: str = typer.Option("", "--release-command", help="Override the detected release steps."),
+    build_command: str = typer.Option("", "--build-command", help="Override the detected build command."),
+    python_version: str = typer.Option("", "--python", help="Override the detected Python version."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the resolved plan without creating anything."),
+):
+    """Create an app on one of your servers.
+
+    Repo autodiscovery prefills the framework, serve and release commands
+    (same as the dashboard form); every flag above overrides it. Use
+    --dry-run to inspect the plan first, then create and follow up with
+    `pyvolt deploy DOMAIN --follow`."""
+    api = Api()
+    srv = api.resolve_server(server)
+    env_map: dict[str, str] = {}
+    for pair in env:
+        if "=" not in pair:
+            raise fail(f"Expected KEY=VALUE, got [bold]{pair}[/bold]")
+        key, _, value = pair.partition("=")
+        env_map[key] = value
+    payload = {
+        "server": srv["name"],
+        "repo": repo,
+        "repo_url": repo_url,
+        "branch": branch,
+        "project_path": path,
+        "env": env_map,
+        "serve_command": serve_command,
+        "release_command": release_command,
+        "build_command": build_command,
+        "python_version": python_version,
+        "dry_run": dry_run,
+    }
+    # A dot means "that's the whole domain"; a bare word is a pyvolt
+    # subdomain prefix. Prefixes can't contain dots, so this never guesses.
+    payload["custom_domain" if "." in domain else "domain_prefix"] = domain
+    r = api.post("/v1/apps", ok=(200, 201, 400, 402, 409), json=payload)
+    if r.status_code in (400, 402, 409):
+        raise fail(r.json()["detail"])
+    body = r.json()
+    if _emit(body):
+        return
+
+    plan = body["plan"]
+    t = _table("FIELD", "VALUE")
+    t.add_row("domain", plan["domain"])
+    t.add_row("repo", f"{plan['repo_url']} @ {plan['branch']}")
+    if plan["framework"]:
+        t.add_row("framework", plan["framework"])
+    t.add_row("protocol", plan["app_protocol"].upper())
+    t.add_row("package manager", plan["package_manager"])
+    if plan["python_version"]:
+        t.add_row("python", plan["python_version"])
+    if plan["serve_command"]:
+        t.add_row("serve", plan["serve_command"])
+    if plan["release_command"]:
+        t.add_row("release", plan["release_command"])
+    if plan["build_command"]:
+        t.add_row("build", plan["build_command"])
+    if plan["frontend_dir"]:
+        t.add_row("frontend", f"{plan['frontend_dir']}/ (passthrough: {plan['frontend_passthrough'] or 'none'})")
+    console.print(t)
+    if plan["evidence"]:
+        console.print(f"[dim]Found: {', '.join(plan['evidence'])}[/dim]")
+    for w in plan["warnings"]:
+        console.print(f"[yellow]⚠[/yellow] {w}")
+
+    if dry_run:
+        console.print("[dim]Dry run — nothing was created.[/dim]")
+        return
+    created = body["app"]
+    if not body["scaffolded"]:
+        err_detail = body["scaffold_error"] or "unknown error"
+        console.print(f"[red]✗[/red] App row created but scaffolding failed: {err_detail}")
+        console.print(f"  Retry from the dashboard: {created['dashboard_url']}")
+        raise typer.Exit(1)
+    if body["deploy_key_ok"] is False:
+        console.print(
+            "[yellow]⚠[/yellow] Deploy key push failed — deploys will fail at clone. "
+            "Grant the Pyvolt GitHub App access to the repo, then redeploy."
+        )
+    console.print(f"[green]✓[/green] Created [bold]{created['domain']}[/bold]")
+    console.print(f"  Deploy:     [bold]pyvolt deploy {created['domain']} --follow[/bold]")
+    console.print(f"  Dashboard:  {created['dashboard_url']}")
 
 
 @app.command()

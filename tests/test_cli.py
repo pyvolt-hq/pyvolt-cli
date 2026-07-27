@@ -321,3 +321,134 @@ def test_unban_requires_ip_or_me(api):
     result = runner.invoke(app, ["unban", "hetzy"])
     assert result.exit_code == 1
     assert "--me" in result.output
+
+
+# ---- apps create ---------------------------------------------------------------
+
+CREATE_PLAN = {
+    "domain": "brest.preview.pyvolt.com",
+    "repo_url": "git@github.com:acme/blog.git",
+    "branch": "main", "project_path": "",
+    "framework": "flask", "app_protocol": "wsgi", "package_manager": "pip",
+    "python_version": "", "settings_module": "", "app_module": "app:app",
+    "serve_command": "gunicorn app:app --workers 2 --bind $SOCK",
+    "release_command": "", "build_command": "", "node_version": "",
+    "frontend_dir": "", "frontend_passthrough": "",
+    "evidence": ["requirements.txt", "flask", "gunicorn"], "warnings": [],
+}
+
+CREATED_APP = {
+    "id": 31, "domain": "brest.preview.pyvolt.com", "server": "hetzy",
+    "status": "pending", "repo": "acme/blog", "branch": "main",
+    "dashboard_url": f"{BASE}/servers/hetzy/apps/31/",
+    "site_url": "https://brest.preview.pyvolt.com",
+}
+
+
+def _create_args(*extra):
+    return ["apps", "create", "--server", "hetzy", "--repo", "acme/blog",
+            "--domain", "brest", *extra]
+
+
+def test_apps_create_dry_run_plans_without_creating(api):
+    import json as _json
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    route = api.post("/api/v1/apps").respond(
+        200, json={"plan": CREATE_PLAN, "app": None, "scaffolded": False,
+                   "scaffold_error": "", "deploy_key_ok": None},
+    )
+    result = runner.invoke(app, _create_args("--dry-run"))
+    assert result.exit_code == 0
+    assert "flask" in result.output
+    assert "gunicorn app:app" in result.output
+    assert "nothing was created" in result.output
+    sent = _json.loads(route.calls[0].request.content)
+    assert sent["domain_prefix"] == "brest"
+    assert sent["dry_run"] is True
+
+
+def test_apps_create_success_prints_next_steps(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.post("/api/v1/apps").respond(
+        201, json={"plan": CREATE_PLAN, "app": CREATED_APP, "scaffolded": True,
+                   "scaffold_error": "", "deploy_key_ok": True},
+    )
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 0
+    assert "Created" in result.output and "brest.preview.pyvolt.com" in result.output
+    assert "pyvolt deploy brest.preview.pyvolt.com --follow" in result.output
+
+
+def test_apps_create_dotted_domain_sent_as_custom(api):
+    import json as _json
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    route = api.post("/api/v1/apps").respond(
+        201, json={"plan": CREATE_PLAN, "app": CREATED_APP, "scaffolded": True,
+                   "scaffold_error": "", "deploy_key_ok": True},
+    )
+    result = runner.invoke(
+        app, ["apps", "create", "--server", "hetzy", "--repo", "acme/blog",
+              "--domain", "brest.pyvolt.com"],
+    )
+    assert result.exit_code == 0
+    sent = _json.loads(route.calls[0].request.content)
+    assert sent["custom_domain"] == "brest.pyvolt.com"
+    assert "domain_prefix" not in sent
+
+
+def test_apps_create_env_pairs_and_validation(api):
+    import json as _json
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    route = api.post("/api/v1/apps").respond(
+        201, json={"plan": CREATE_PLAN, "app": CREATED_APP, "scaffolded": True,
+                   "scaffold_error": "", "deploy_key_ok": True},
+    )
+    ok = runner.invoke(app, _create_args("--env", "SECRET_KEY=shh", "--env", "DEBUG=0"))
+    assert ok.exit_code == 0
+    sent = _json.loads(route.calls[0].request.content)
+    assert sent["env"] == {"SECRET_KEY": "shh", "DEBUG": "0"}
+
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    bad = runner.invoke(app, _create_args("--env", "NOEQUALS"))
+    assert bad.exit_code == 1
+    assert "KEY=VALUE" in bad.output
+
+
+def test_apps_create_api_error_detail_surfaced(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.post("/api/v1/apps").respond(
+        409, json={"detail": "'brest.preview.pyvolt.com' is already used by another app on Pyvolt."},
+    )
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 1
+    assert "already used" in result.output
+
+
+def test_apps_create_scaffold_failure_exits_nonzero(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.post("/api/v1/apps").respond(
+        201, json={"plan": CREATE_PLAN, "app": CREATED_APP, "scaffolded": False,
+                   "scaffold_error": "ssh: connect refused", "deploy_key_ok": True},
+    )
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 1
+    assert "scaffolding failed" in result.output
+
+
+def test_apps_create_deploy_key_warning(api):
+    api.get("/api/v1/servers").respond(200, json=SERVERS)
+    api.post("/api/v1/apps").respond(
+        201, json={"plan": CREATE_PLAN, "app": CREATED_APP, "scaffolded": True,
+                   "scaffold_error": "", "deploy_key_ok": False},
+    )
+    result = runner.invoke(app, _create_args())
+    assert result.exit_code == 0
+    assert "Deploy key push failed" in result.output
+
+
+def test_apps_list_filter_still_works_as_group(api):
+    route = api.get("/api/v1/apps", params={"server": "hetzy"}).respond(200, json=APPS)
+    result = runner.invoke(app, ["apps", "--server", "hetzy"])
+    assert result.exit_code == 0
+    assert "blog.example.com" in result.output
+    assert route.called
