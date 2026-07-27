@@ -36,7 +36,7 @@ def _emit(data) -> bool:
     return False
 
 STATUS_STYLE = {
-    "ready": "green", "live": "green", "succeeded": "green", "running": "cyan",
+    "ready": "green", "live": "green", "success": "green", "running": "cyan",
     "active": "green", "queued": "yellow", "deploying": "cyan",
     "failed": "red", "error": "red", "inactive": "red",
 }
@@ -306,7 +306,7 @@ def status(app_name: str = typer.Argument(..., metavar="DOMAIN")):
 
 # ---- deployments --------------------------------------------------------------
 
-TERMINAL = ("succeeded", "failed")
+TERMINAL = ("success", "failed")
 
 
 def _follow(api: Api, deployment_id: int) -> str:

@@ -103,7 +103,7 @@ def test_deploy_follow_streams_until_terminal(api):
     log = api.get("/api/v1/deployments/77/log")
     log.side_effect = [
         Response(200, json={"status": "running", "offset": 5, "chunk": "one\n"}),
-        Response(200, json={"status": "succeeded", "offset": 9, "chunk": "two\n"}),
+        Response(200, json={"status": "success", "offset": 9, "chunk": "two\n"}),
     ]
     result = runner.invoke(app, ["deploy", "blog", "--follow"])
     assert result.exit_code == 0
