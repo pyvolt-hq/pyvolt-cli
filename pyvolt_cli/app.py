@@ -365,7 +365,7 @@ def deployments(
                 latest = api.get(f"/v1/apps/{site['id']}/deployments", params={"limit": 1})
                 if latest and latest[0]["id"] != baseline:
                     running = latest[0]
-        msg = (running.get("commit_message") or "").splitlines()[0][:60]
+        msg = ((running.get("commit_message") or "").splitlines() or [""])[0][:60]
         console.print(
             f"[green]▶[/green] Deployment [bold]{running['commit_sha'][:7]}[/bold] {msg} "
             f"({running.get('triggered_by', '')})"

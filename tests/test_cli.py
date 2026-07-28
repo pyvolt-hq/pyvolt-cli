@@ -499,3 +499,13 @@ def test_watch_exits_nonzero_on_failure(api):
     result = runner.invoke(app, ["deployments", "blog", "--watch"])
     assert result.exit_code == 1
     assert "boom" in result.output
+
+
+def test_watch_handles_empty_commit_message(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/deployments").respond(
+        200, json=[_dep(93, "running", msg="")])
+    api.get("/api/v1/deployments/93/log").respond(
+        200, json={"status": "success", "offset": 2, "chunk": "d\n"})
+    result = runner.invoke(app, ["deployments", "blog", "--watch"])
+    assert result.exit_code == 0
