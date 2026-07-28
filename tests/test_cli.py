@@ -452,3 +452,50 @@ def test_apps_list_filter_still_works_as_group(api):
     assert result.exit_code == 0
     assert "blog.example.com" in result.output
     assert route.called
+
+
+# ---- deployments --watch --------------------------------------------------------
+
+def _dep(id, status, sha="abc1234", msg="Refresh listings data", by="push"):
+    return {"id": id, "status": status, "commit_sha": sha, "commit_message": msg,
+            "triggered_by": by, "created_at": "2026-07-28T10:00:00", "duration_seconds": None}
+
+
+def test_watch_attaches_to_running_deployment(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/deployments").respond(200, json=[_dep(90, "running")])
+    log = api.get("/api/v1/deployments/90/log")
+    log.side_effect = [
+        Response(200, json={"status": "running", "offset": 4, "chunk": "one\n"}),
+        Response(200, json={"status": "success", "offset": 8, "chunk": "two\n"}),
+    ]
+    result = runner.invoke(app, ["deployments", "blog", "--watch"])
+    assert result.exit_code == 0
+    assert "abc1234" in result.output and "two" in result.output and "Deployed" in result.output
+
+
+def test_watch_waits_for_next_deployment(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    lst = api.get("/api/v1/apps/11/deployments")
+    lst.side_effect = [
+        Response(200, json=[_dep(90, "success")]),          # baseline
+        Response(200, json=[_dep(90, "success")]),          # poll: nothing new yet
+        Response(200, json=[_dep(91, "queued", sha="def5678")]),  # push arrived
+    ]
+    log = api.get("/api/v1/deployments/91/log")
+    log.side_effect = [
+        Response(200, json={"status": "success", "offset": 3, "chunk": "ok\n"}),
+    ]
+    result = runner.invoke(app, ["deployments", "blog", "--watch"])
+    assert result.exit_code == 0
+    assert "def5678" in result.output and "Waiting for the next deployment" in result.output
+
+
+def test_watch_exits_nonzero_on_failure(api):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/deployments").respond(200, json=[_dep(92, "running")])
+    api.get("/api/v1/deployments/92/log").respond(
+        200, json={"status": "failed", "offset": 5, "chunk": "boom\n"})
+    result = runner.invoke(app, ["deployments", "blog", "--watch"])
+    assert result.exit_code == 1
+    assert "boom" in result.output

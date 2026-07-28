@@ -343,11 +343,38 @@ def deploy(
 
 
 @app.command()
-def deployments(app_name: str = typer.Argument(..., metavar="DOMAIN")):
+def deployments(
+    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    watch: bool = typer.Option(
+        False, "--watch", "-w",
+        help="Wait for the next deployment (e.g. after a git push), stream its log, "
+             "exit non-zero on failure. Attaches if one is already running.",
+    ),
+):
     """Recent deployments for an app."""
     api = Api()
     site = api.resolve_app(app_name)
     data = api.get(f"/v1/apps/{site['id']}/deployments")
+    if watch:
+        running = next((d for d in data if d["status"] in ("queued", "running")), None)
+        if running is None:
+            baseline = data[0]["id"] if data else None
+            console.print(f"[dim]Waiting for the next deployment of {site['domain']}… (^C to stop)[/dim]")
+            while running is None:
+                time.sleep(3)
+                latest = api.get(f"/v1/apps/{site['id']}/deployments", params={"limit": 1})
+                if latest and latest[0]["id"] != baseline:
+                    running = latest[0]
+        msg = (running.get("commit_message") or "").splitlines()[0][:60]
+        console.print(
+            f"[green]▶[/green] Deployment [bold]{running['commit_sha'][:7]}[/bold] {msg} "
+            f"({running.get('triggered_by', '')})"
+        )
+        status = _follow(api, running["id"])
+        if status == "failed":
+            raise fail("Deployment failed.")
+        console.print(f"\n[green]✓[/green] Deployed {site['domain']}")
+        return
     if _emit(data):
         return
     t = _table("WHEN", "STATUS", "COMMIT", "MESSAGE", "BY", "TOOK")
