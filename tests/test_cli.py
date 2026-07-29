@@ -509,3 +509,57 @@ def test_watch_handles_empty_commit_message(api):
         200, json={"status": "success", "offset": 2, "chunk": "d\n"})
     result = runner.invoke(app, ["deployments", "blog", "--watch"])
     assert result.exit_code == 0
+
+
+# ---- SSH keys (#75) ----
+
+def test_keys_list(api):
+    api.get("/api/v1/ssh-keys").respond(200, json=[
+        {"id": 1, "name": "laptop", "fingerprint": "SHA256:abc"},
+        {"id": 2, "name": "desktop", "fingerprint": "SHA256:def"},
+    ])
+    result = runner.invoke(app, ["keys", "list"])
+    assert result.exit_code == 0
+    assert "laptop" in result.output
+    assert "SHA256:abc" in result.output
+
+
+def test_keys_list_empty(api):
+    api.get("/api/v1/ssh-keys").respond(200, json=[])
+    result = runner.invoke(app, ["keys", "list"])
+    assert result.exit_code == 0
+    assert "No SSH keys yet" in result.output
+
+
+def test_keys_add(api, tmp_path):
+    key = tmp_path / "id_ed25519.pub"
+    key.write_text("ssh-ed25519 AAAA me@host\n")
+    api.post("/api/v1/ssh-keys").respond(
+        201, json={"id": 5, "name": "me@host", "fingerprint": "SHA256:xyz"})
+    result = runner.invoke(app, ["keys", "add", str(key)])
+    assert result.exit_code == 0, result.output
+    assert "Added" in result.output
+    assert "me@host" in result.output
+
+
+def test_keys_add_missing_file(api):
+    result = runner.invoke(app, ["keys", "add", "/no/such/key.pub"])
+    assert result.exit_code == 1
+    assert "No public key" in result.output
+
+
+def test_keys_add_rejected(api, tmp_path):
+    key = tmp_path / "id.pub"
+    key.write_text("ssh-ed25519 AAAA me@host")
+    api.post("/api/v1/ssh-keys").respond(
+        422, json={"detail": "That doesn't look like an SSH public key."})
+    result = runner.invoke(app, ["keys", "add", str(key)])
+    assert result.exit_code == 1
+    assert "SSH public key" in result.output
+
+
+def test_keys_rm(api):
+    api.delete("/api/v1/ssh-keys/5").respond(200, json={"removed": 5})
+    result = runner.invoke(app, ["keys", "rm", "5"])
+    assert result.exit_code == 0
+    assert "Removed key" in result.output

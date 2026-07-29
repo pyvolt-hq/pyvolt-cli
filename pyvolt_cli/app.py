@@ -581,3 +581,56 @@ def open_(
         return
     console.print(f"Opening {site['dashboard_url']}")
     webbrowser.open(site["dashboard_url"])
+
+
+# ---- SSH keys (#75) -----------------------------------------------------------
+
+keys_app = typer.Typer(help="Manage the SSH public keys pushed to your servers.", no_args_is_help=True)
+app.add_typer(keys_app, name="keys")
+
+
+@keys_app.command("list")
+def keys_list():
+    """List your SSH public keys."""
+    data = Api().get("/v1/ssh-keys")
+    if _emit(data):
+        return
+    if not data:
+        console.print("No SSH keys yet. Add one with [bold]pyvolt keys add[/bold].")
+        return
+    t = _table("ID", "NAME", "FINGERPRINT")
+    for k in data:
+        t.add_row(str(k["id"]), k["name"], k["fingerprint"])
+    console.print(t)
+
+
+@keys_app.command("add")
+def keys_add(
+    path: str = typer.Argument(None, metavar="PATH", help="Public key file (default: ~/.ssh/id_ed25519.pub)."),
+    name: str = typer.Option(None, "--name", "-n", help="Label for the key (default: its comment, else your hostname)."),
+):
+    """Add an SSH public key. Pushed to every ready server in your account."""
+    import socket
+    from pathlib import Path
+
+    p = Path(path).expanduser() if path else Path.home() / ".ssh" / "id_ed25519.pub"
+    if not p.exists():
+        raise fail(f"No public key at {p}. Pass a path, e.g. [bold]pyvolt keys add ~/.ssh/id_rsa.pub[/bold].")
+    pub = p.read_text().strip()
+    if not name:
+        parts = pub.split()
+        name = parts[2] if len(parts) >= 3 else socket.gethostname()
+    r = Api().post("/v1/ssh-keys", json={"name": name, "public_key": pub}, ok=(201, 422))
+    if r.status_code == 422:
+        raise fail(r.json().get("detail", "That doesn't look like an SSH public key."))
+    key = r.json()
+    if _emit(key):
+        return
+    console.print(f"[green]✓[/green] Added [bold]{key['name']}[/bold] ({key['fingerprint']}). Syncing to your servers.")
+
+
+@keys_app.command("rm")
+def keys_rm(key_id: int = typer.Argument(..., metavar="ID", help="Key ID from `pyvolt keys list`.")):
+    """Remove an SSH public key by ID."""
+    Api().delete(f"/v1/ssh-keys/{key_id}")
+    console.print(f"[green]✓[/green] Removed key {key_id}. Re-syncing your servers.")
