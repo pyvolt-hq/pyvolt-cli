@@ -563,3 +563,55 @@ def test_keys_rm(api):
     result = runner.invoke(app, ["keys", "rm", "5"])
     assert result.exit_code == 0
     assert "Removed key" in result.output
+
+
+# --- pyvolt.toml (ADR-0012) -------------------------------------------------
+
+def test_config_validate_ok(api, tmp_path):
+    f = tmp_path / "pyvolt.toml"
+    f.write_text('[app]\npython = "3.12"\n')
+    api.post("/api/v1/config/validate").mock(
+        return_value=Response(200, json={"valid": True, "errors": [], "managed": ["python_version"]})
+    )
+    result = runner.invoke(app, ["config", "validate", str(f)])
+    assert result.exit_code == 0
+    assert "valid" in result.output
+
+
+def test_config_validate_reports_errors(api, tmp_path):
+    f = tmp_path / "pyvolt.toml"
+    f.write_text('[app]\nserv = "x"\n')
+    api.post("/api/v1/config/validate").mock(
+        return_value=Response(200, json={"valid": False, "errors": ["unknown key 'serv' in [app]"], "managed": []})
+    )
+    result = runner.invoke(app, ["config", "validate", str(f)])
+    assert result.exit_code == 1
+    assert "serv" in result.output
+
+
+def test_config_validate_missing_file(api):
+    result = runner.invoke(app, ["config", "validate", "/nope/pyvolt.toml"])
+    assert result.exit_code != 0
+    assert "No file" in result.output
+
+
+def test_apps_export_config_prints(api):
+    api.get("/api/v1/apps").mock(return_value=Response(200, json=APPS))
+    api.get("/api/v1/apps/11/config").mock(
+        return_value=Response(200, json={"toml": '[app]\npython = "3.12"\n'})
+    )
+    result = runner.invoke(app, ["apps", "export-config", "blog"])
+    assert result.exit_code == 0
+    assert "[app]" in result.output
+
+
+def test_apps_export_config_writes(api, tmp_path, monkeypatch):
+    api.get("/api/v1/apps").mock(return_value=Response(200, json=APPS))
+    api.get("/api/v1/apps/11/config").mock(
+        return_value=Response(200, json={"toml": '[app]\npython = "3.12"\n'})
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["apps", "export-config", "blog", "--write"])
+    assert result.exit_code == 0
+    assert (tmp_path / "pyvolt.toml").exists()
+    assert "Wrote pyvolt.toml" in result.output

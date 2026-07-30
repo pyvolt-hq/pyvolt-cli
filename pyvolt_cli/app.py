@@ -634,3 +634,67 @@ def keys_rm(key_id: int = typer.Argument(..., metavar="ID", help="Key ID from `p
     """Remove an SSH public key by ID."""
     Api().delete(f"/v1/ssh-keys/{key_id}")
     console.print(f"[green]✓[/green] Removed key {key_id}. Re-syncing your servers.")
+
+
+@apps_app.command("export-config")
+def apps_export_config(
+    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    write: bool = typer.Option(
+        False, "--write", "-w", help="Write ./pyvolt.toml instead of printing it."
+    ),
+):
+    """Generate a pyvolt.toml from the app's current settings (ADR-0012).
+
+    Commit the file to manage this app's deploy config from the repo. Its keys
+    then override the dashboard on every deploy; omitted keys keep their current
+    values."""
+    from pathlib import Path
+
+    api = Api()
+    site = api.resolve_app(app_name)
+    body = api.get(f"/v1/apps/{site['id']}/config")
+    if _emit(body):
+        return
+    toml = body["toml"]
+    if not write:
+        # Raw stdout (no Rich markup/wrapping) so `> pyvolt.toml` is byte-clean.
+        print(toml, end="")
+        return
+    p = Path("pyvolt.toml")
+    if p.exists():
+        raise fail("pyvolt.toml already exists here — remove it first, or drop --write to print.")
+    p.write_text(toml)
+    console.print(
+        f"[green]✓ Wrote pyvolt.toml[/] ({len(toml.splitlines())} lines). "
+        "Commit it to manage this app's deploy config from the repo."
+    )
+
+
+config_app = typer.Typer(
+    help="Validate and export pyvolt.toml (repo deploy config).", no_args_is_help=True
+)
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("validate")
+def config_validate(
+    path: str = typer.Argument("pyvolt.toml", help="Path to the file to validate."),
+):
+    """Check a local pyvolt.toml against the server's schema — the SAME check the
+    deploy runs, so a pass here means the deploy won't reject it."""
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.exists():
+        raise fail(f"No file at [bold]{path}[/bold].")
+    body = Api().post("/v1/config/validate", json={"text": p.read_text()}).json()
+    if _emit(body):
+        return
+    if body["valid"]:
+        managed = ", ".join(body.get("managed") or []) or "nothing"
+        console.print(f"[green]✓ {path} is valid.[/] It manages: {managed}")
+        return
+    console.print(f"[red]✗ {path} has problems:[/]")
+    for err in body["errors"]:
+        console.print(f"  • {err}")
+    raise typer.Exit(1)
