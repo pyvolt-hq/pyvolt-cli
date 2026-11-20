@@ -615,3 +615,28 @@ def test_apps_export_config_writes(api, tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert (tmp_path / "pyvolt.toml").exists()
     assert "Wrote pyvolt.toml" in result.output
+
+
+def test_run_execs_ssh_with_the_apps_run_script(api, monkeypatch):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/servers").respond(200, json=[
+        {"name": "hetzy", "status": "ready", "ip_address": "1.2.3.4", "ssh_user": "pyvolt", "ssh_port": 22},
+    ])
+    called = {}
+
+    def fake_exec(prog, args):
+        called["args"] = args
+        raise SystemExit(0)
+
+    monkeypatch.setattr("os.execvp", fake_exec)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ssh")
+    result = runner.invoke(app, ["run", "-a", "shop", "--", "python", "manage.py", "shell", "-c", "print('hi there')"])
+    assert result.exit_code == 0, result.output
+    assert called["args"][:5] == ["ssh", "-p", "22", "-T", "pyvolt@1.2.3.4"]
+    assert called["args"][5] == "sites/shop.example.com/run python manage.py shell -c 'print('\"'\"'hi there'\"'\"')'"
+
+
+def test_run_needs_a_command(api):
+    result = runner.invoke(app, ["run", "-a", "shop"])
+    assert result.exit_code == 1
+    assert "after --" in result.output

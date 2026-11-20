@@ -171,6 +171,54 @@ def ssh(
     os.execvp("ssh", args)
 
 
+def _run_args(srv: dict, domain: str, command: list[str], tty: bool) -> list[str]:
+    """The ssh command line for `pyvolt run`: the app's run script, which each
+    deploy writes, with the command quoted for the remote shell."""
+    import shlex
+
+    target = f"{srv.get('ssh_user', 'pyvolt')}@{srv['ip_address']}"
+    args = ["ssh", "-p", str(srv.get("ssh_port", 22))]
+    args.append("-t" if tty else "-T")
+    return args + [target, shlex.join([f"sites/{domain}/run", *command])]
+
+
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def run(
+    ctx: typer.Context,
+    app_name: str = typer.Option(..., "--app", "-a", metavar="DOMAIN", help="The app to run it for."),
+):
+    """Run a one-off command in an app's live release, with its environment variables.
+
+    It runs in the app's project folder with its .env, virtualenv and settings
+    module, like its release commands. Put the command after --:
+
+      pyvolt run -a shop.example.com -- python manage.py createsuperuser
+
+    Interactive commands (a shell, createsuperuser) work from a terminal. The
+    exit code is the command's, so it works in scripts too. Needs your SSH key
+    on the server, like pyvolt ssh, and a deploy since the run script arrived."""
+    import os
+    import shutil
+    import sys
+
+    command = list(ctx.args)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        raise fail("Give the command to run after --, e.g. pyvolt run -a DOMAIN -- python manage.py migrate")
+    if not shutil.which("ssh"):
+        raise fail("No `ssh` client found on PATH.")
+    api = Api()
+    site = api.resolve_app(app_name)
+    srv = api.resolve_server(site["server"])
+    if srv["status"] != "ready":
+        raise fail(f"{srv['name']} is {srv['status']}, not ready.")
+    args = _run_args(srv, site["domain"], command, sys.stdin.isatty() and sys.stdout.isatty())
+    os.execvp("ssh", args)
+
+
 apps_app = typer.Typer(help="List your apps; `pyvolt apps create` makes a new one.")
 app.add_typer(apps_app, name="apps")
 

@@ -22,6 +22,7 @@ pyvolt deploy myapp --follow
 | `pyvolt bans SERVER` | IPs banned by fail2ban, your own flagged |
 | `pyvolt unban SERVER [IP] [--me]` | Lift a ban — `--me` unbans your own IP, even while it's banned |
 | `pyvolt ssh SERVER [--app DOMAIN]` | Open a shell on the server (as the `pyvolt` user); `--app` cds into the app dir |
+| `pyvolt run -a DOMAIN -- COMMAND` | Run a one-off command in the app's live release with its environment variables, e.g. `-- python manage.py createsuperuser` |
 | `pyvolt open DOMAIN` | Jump to the dashboard |
 
 `DOMAIN` is the app's domain, or any unambiguous fragment of it — domains
