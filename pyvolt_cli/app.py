@@ -7,6 +7,7 @@ import time
 import webbrowser
 
 import typer
+from typer.core import TyperGroup
 from rich.console import Console
 from rich.table import Table
 
@@ -144,7 +145,7 @@ def servers():
 
 @app.command()
 def ssh(
-    server: str = typer.Argument(..., metavar="SERVER"),
+    server: str = typer.Argument("", metavar="[SERVER]", help="Default: the server of the app this folder's repo deploys."),
     app_name: str = typer.Option("", "--app", "-a", help="cd into this app's directory on connect."),
 ):
     """Open an SSH shell on a server (as the pyvolt app-user).
@@ -158,15 +159,19 @@ def ssh(
     if not shutil.which("ssh"):
         raise fail("No `ssh` client found on PATH.")
     api = Api()
+    if not server:
+        # In an app's repo folder: its server, landing in its directory.
+        site = api.app(app_name)
+        server, app_name = site["server"], site["domain"]
     srv = api.resolve_server(server)
     if srv["status"] != "ready":
         raise fail(f"{srv['name']} is {srv['status']}, not ready.")
     target = f"{srv.get('ssh_user', 'pyvolt')}@{srv['ip_address']}"
     args = ["ssh", "-p", str(srv.get("ssh_port", 22)), target]
     if app_name:
-        site = api.resolve_app(app_name)
+        site = api.app(app_name)
         # Drop into the app's checkout, then hand over an interactive shell.
-        args += ["-t", f"cd sites/{site['domain']}/repo 2>/dev/null; exec \"$SHELL\" -l"]
+        args += ["-t", f"cd sites/{site['domain']}/current 2>/dev/null; exec \"$SHELL\" -l"]
     console.print(f"[dim]Connecting to {target}…[/dim]")
     os.execvp("ssh", args)
 
@@ -187,7 +192,7 @@ def _run_args(srv: dict, domain: str, command: list[str], tty: bool) -> list[str
 )
 def run(
     ctx: typer.Context,
-    app_name: str = typer.Option(..., "--app", "-a", metavar="DOMAIN", help="The app to run it for."),
+    app_name: str = typer.Option("", "--app", "-a", metavar="DOMAIN", help="The app; default: the one this folder's repo deploys."),
 ):
     """Run a one-off command in an app's live release, with its environment variables.
 
@@ -196,7 +201,7 @@ def run(
 
       pyvolt run -a shop.example.com -- python manage.py createsuperuser
 
-    Interactive commands (a shell, createsuperuser) work from a terminal. The
+    In the app's repo folder, -a can be left out. Interactive commands (a shell, createsuperuser) work from a terminal. The
     exit code is the command's, so it works in scripts too. Needs your SSH key
     on the server, like pyvolt ssh, and a deploy since the run script arrived."""
     import os
@@ -207,11 +212,11 @@ def run(
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        raise fail("Give the command to run after --, e.g. pyvolt run -a DOMAIN -- python manage.py migrate")
+        raise fail("Give the command to run after --, e.g. pyvolt run -- python manage.py migrate")
     if not shutil.which("ssh"):
         raise fail("No `ssh` client found on PATH.")
     api = Api()
-    site = api.resolve_app(app_name)
+    site = api.app(app_name)
     srv = api.resolve_server(site["server"])
     if srv["status"] != "ready":
         raise fail(f"{srv['name']} is {srv['status']}, not ready.")
@@ -336,9 +341,9 @@ def apps_create(
 
 
 @app.command()
-def status(app_name: str = typer.Argument(..., metavar="DOMAIN")):
+def status(app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys.")):
     """Show one app's details: status, URLs, repo and branch."""
-    site = Api().resolve_app(app_name)
+    site = Api().app(app_name)
     if _emit(site):
         return
     t = _table("FIELD", "VALUE")
@@ -370,12 +375,12 @@ def _follow(api: Api, deployment_id: int) -> str:
 
 @app.command()
 def deploy(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys."),
     follow: bool = typer.Option(False, "--follow", "-f", help="Stream the deploy log."),
 ):
     """Trigger a deployment."""
     api = Api()
-    site = api.resolve_app(app_name)
+    site = api.app(app_name)
     r = api.post(f"/v1/apps/{site['id']}/deployments", ok=(201, 409))
     if r.status_code == 409:
         raise fail(r.json()["detail"])
@@ -392,7 +397,7 @@ def deploy(
 
 @app.command()
 def deployments(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys."),
     watch: bool = typer.Option(
         False, "--watch", "-w",
         help="Wait for the next deployment (e.g. after a git push), stream its log, "
@@ -401,7 +406,7 @@ def deployments(
 ):
     """Recent deployments for an app."""
     api = Api()
-    site = api.resolve_app(app_name)
+    site = api.app(app_name)
     data = api.get(f"/v1/apps/{site['id']}/deployments")
     if watch:
         running = next((d for d in data if d["status"] in ("queued", "running")), None)
@@ -438,12 +443,22 @@ def deployments(
 
 # ---- env ----------------------------------------------------------------------
 
-env_app = typer.Typer(no_args_is_help=True, help="Manage an app's environment variables.")
+class _OptionalAppGroup(TyperGroup):
+    """A group whose first argument, the app, can be left out in the app's
+    repo folder: `pyvolt env list` as well as `pyvolt env DOMAIN list`."""
+
+    def parse_args(self, ctx, args):
+        if args and args[0] in self.commands:
+            args = ["", *args]
+        return super().parse_args(ctx, args)
+
+
+env_app = typer.Typer(cls=_OptionalAppGroup, no_args_is_help=True, help="Manage an app's environment variables.")
 app.add_typer(env_app, name="env")
 
 
 @env_app.callback()
-def _env_main(ctx: typer.Context, app_name: str = typer.Argument(..., metavar="DOMAIN")):
+def _env_main(ctx: typer.Context, app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys.")):
     ctx.obj = app_name
 
 
@@ -451,7 +466,7 @@ def _env_main(ctx: typer.Context, app_name: str = typer.Argument(..., metavar="D
 def env_list(ctx: typer.Context):
     """Show the app's variables (secret values masked)."""
     api = Api()
-    site = api.resolve_app(ctx.obj)
+    site = api.app(ctx.obj)
     data = api.get(f"/v1/apps/{site['id']}/env")
     if _emit(data):
         return
@@ -465,7 +480,7 @@ def env_list(ctx: typer.Context):
 def env_get(ctx: typer.Context, key: str):
     """Show one variable's value — unmasked, since it's your own secret."""
     api = Api()
-    site = api.resolve_app(ctx.obj)
+    site = api.app(ctx.obj)
     row = api.get(f"/v1/apps/{site['id']}/env/{key}")
     if _emit(row):
         return
@@ -476,7 +491,7 @@ def env_get(ctx: typer.Context, key: str):
 def env_set(ctx: typer.Context, pairs: list[str] = typer.Argument(..., metavar="KEY=VALUE...")):
     """Set one or more variables — pushes the .env and restarts the app."""
     api = Api()
-    site = api.resolve_app(ctx.obj)
+    site = api.app(ctx.obj)
     for pair in pairs:
         if "=" not in pair:
             raise fail(f"Expected KEY=VALUE, got [bold]{pair}[/bold]")
@@ -489,7 +504,7 @@ def env_set(ctx: typer.Context, pairs: list[str] = typer.Argument(..., metavar="
 def env_rm(ctx: typer.Context, key: str):
     """Remove a variable — pushes the .env and restarts the app."""
     api = Api()
-    site = api.resolve_app(ctx.obj)
+    site = api.app(ctx.obj)
     r = api.delete(f"/v1/apps/{site['id']}/env/{key}")
     if not r["deleted"]:
         raise fail(f"[bold]{key}[/bold] is not set.")
@@ -500,17 +515,20 @@ def env_rm(ctx: typer.Context, key: str):
 
 @app.command()
 def ps(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys."),
     action: str = typer.Argument("", metavar="[restart]"),
     process: str = typer.Argument("", metavar="[NAME]"),
 ):
-    """List background processes; `pyvolt ps APP restart NAME` restarts one."""
+    """List background processes; `pyvolt ps [DOMAIN] restart NAME` restarts one."""
+    if app_name == "restart" and not process:
+        # `pyvolt ps restart worker` in the app's folder: no domain given.
+        app_name, action, process = "", "restart", action
     api = Api()
-    site = api.resolve_app(app_name)
+    site = api.app(app_name)
     procs = api.get(f"/v1/apps/{site['id']}/processes")
     if action:
         if action != "restart" or not process:
-            raise fail("Usage: pyvolt ps DOMAIN restart NAME")
+            raise fail("Usage: pyvolt ps [DOMAIN] restart NAME")
         match = [p for p in procs if p["name"] == process]
         if not match:
             known = ", ".join(p["name"] for p in procs) or "none"
@@ -529,13 +547,13 @@ def ps(
 
 @app.command()
 def logs(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys."),
     process: str = typer.Option("", "--process", "-p", help="A named background process instead of the web app."),
     lines: int = typer.Option(100, "--lines", "-n", help="How many lines (max 500)."),
 ):
     """Tail the app's journal."""
     api = Api()
-    site = api.resolve_app(app_name)
+    site = api.app(app_name)
     params = {"lines": lines}
     if process:
         params["process"] = process
@@ -615,11 +633,11 @@ def unban(
 
 @app.command("open")
 def open_(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys."),
     print_url: bool = typer.Option(False, "--print", "-p", help="Print the URLs instead of opening a browser."),
 ):
     """Open the app's dashboard in your browser (or --print the URLs)."""
-    site = Api().resolve_app(app_name)
+    site = Api().app(app_name)
     if _emit({"site_url": site.get("site_url"), "dashboard_url": site.get("dashboard_url")}):
         return
     if print_url:
@@ -686,7 +704,7 @@ def keys_rm(key_id: int = typer.Argument(..., metavar="ID", help="Key ID from `p
 
 @apps_app.command("export-config")
 def apps_export_config(
-    app_name: str = typer.Argument(..., metavar="DOMAIN"),
+    app_name: str = typer.Argument("", metavar="[DOMAIN]", help="The app; default: the one this folder's repo deploys."),
     write: bool = typer.Option(
         False, "--write", "-w", help="Write ./pyvolt.toml instead of printing it."
     ),
@@ -699,7 +717,7 @@ def apps_export_config(
     from pathlib import Path
 
     api = Api()
-    site = api.resolve_app(app_name)
+    site = api.app(app_name)
     body = api.get(f"/v1/apps/{site['id']}/config")
     if _emit(body):
         return

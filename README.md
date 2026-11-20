@@ -21,12 +21,17 @@ pyvolt deploy myapp --follow
 | `pyvolt metrics SERVER` | Latest CPU / memory / disk / network snapshot |
 | `pyvolt bans SERVER` | IPs banned by fail2ban, your own flagged |
 | `pyvolt unban SERVER [IP] [--me]` | Lift a ban — `--me` unbans your own IP, even while it's banned |
-| `pyvolt ssh SERVER [--app DOMAIN]` | Open a shell on the server (as the `pyvolt` user); `--app` cds into the app dir |
-| `pyvolt run -a DOMAIN -- COMMAND` | Run a one-off command in the app's live release with its environment variables, e.g. `-- python manage.py createsuperuser` |
+| `pyvolt ssh [SERVER] [--app DOMAIN]` | Open a shell on the server (as the `pyvolt` user); `--app` cds into the app's live release |
+| `pyvolt run [-a DOMAIN] -- COMMAND` | Run a one-off command in the app's live release with its environment variables, e.g. `-- python manage.py createsuperuser` |
 | `pyvolt open DOMAIN` | Jump to the dashboard |
 
 `DOMAIN` is the app's domain, or any unambiguous fragment of it — domains
 are unique across the platform, so no server qualifier is ever needed.
+
+In an app's repo folder you can leave it out: `pyvolt logs`, `pyvolt env list`,
+`pyvolt run -- python manage.py migrate`, and `pyvolt ssh` with no server, use
+the app that deploys from the folder's git remote. If that repo deploys to more
+than one app (staging and production, say), pass the one you mean.
 
 Full guide: [pyvolt.com/docs/cli](https://pyvolt.com/docs/cli/) · HTTP API:
 [pyvolt.com/api/docs](https://pyvolt.com/api/docs)
