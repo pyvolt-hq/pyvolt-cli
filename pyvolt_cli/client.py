@@ -68,6 +68,26 @@ class Api:
         ambiguous = ", ".join(s["name"] for s in matches)
         raise fail(f"[bold]{name}[/bold] is ambiguous: {ambiguous}")
 
+    def app(self, name: str = "") -> dict:
+        """The named app, or with no name, the one this folder deploys."""
+        return self.resolve_app(name) if name else self.app_for_cwd()
+
+    def app_for_cwd(self) -> dict:
+        """The app deployed from this folder's repo (its git remote), when
+        exactly one is. Several (staging and production, say) are never
+        guessed between."""
+        repo = repo_slug(_git_remote())
+        if not repo:
+            raise fail("Pass the app's domain, or run this in its repo folder.")
+        apps = self.get("/v1/apps")
+        matches = [a for a in apps if repo_slug(a.get("repo") or "") == repo]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise fail(f"No app deploys from [bold]{repo}[/bold]. Pass the app's domain.")
+        domains = ", ".join(a["domain"] for a in matches)
+        raise fail(f"[bold]{repo}[/bold] deploys to more than one app ({domains}). Pass the one you mean.")
+
     def resolve_app(self, name: str) -> dict:
         """Match an app by exact domain, else unambiguous substring."""
         apps = self.get("/v1/apps")
@@ -82,3 +102,29 @@ class Api:
             raise fail(f"No app matches [bold]{name}[/bold]. Your apps: {known}")
         ambiguous = ", ".join(a["domain"] for a in matches)
         raise fail(f"[bold]{name}[/bold] is ambiguous: {ambiguous}")
+
+
+def _git_remote() -> str:
+    """This folder's git remote URL (origin), or empty outside a repo."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def repo_slug(url: str) -> str:
+    """owner/repo from any form of a repo's address: git@host:owner/repo.git,
+    https://host/owner/repo, or a bare owner/repo. Lowercased, for matching."""
+    path = url.strip().removesuffix("/").removesuffix(".git")
+    if "://" in path:
+        path = path.split("://", 1)[1].split("/", 1)[-1]
+    elif "@" in path and ":" in path:
+        path = path.split(":", 1)[1]
+    parts = [p for p in path.split("/") if p]
+    return "/".join(parts[-2:]).lower() if len(parts) >= 2 else ""

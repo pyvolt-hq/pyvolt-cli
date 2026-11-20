@@ -240,7 +240,7 @@ def test_ssh_app_flag_cds_into_app_dir(api, monkeypatch):
     monkeypatch.setattr("os.execvp", lambda file, args: called.setdefault("args", args))
     runner.invoke(app, ["ssh", "hetzy", "--app", "blog"])
     assert "-t" in called["args"]
-    assert any("cd sites/blog.example.com/repo" in a for a in called["args"])
+    assert any("cd sites/blog.example.com/current" in a for a in called["args"])
 
 
 def test_ssh_refuses_non_ready_server(api, monkeypatch):
@@ -615,3 +615,86 @@ def test_apps_export_config_writes(api, tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert (tmp_path / "pyvolt.toml").exists()
     assert "Wrote pyvolt.toml" in result.output
+
+
+def test_run_execs_ssh_with_the_apps_run_script(api, monkeypatch):
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/servers").respond(200, json=[
+        {"name": "hetzy", "status": "ready", "ip_address": "1.2.3.4", "ssh_user": "pyvolt", "ssh_port": 22},
+    ])
+    called = {}
+
+    def fake_exec(prog, args):
+        called["args"] = args
+        raise SystemExit(0)
+
+    monkeypatch.setattr("os.execvp", fake_exec)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ssh")
+    result = runner.invoke(app, ["run", "-a", "shop", "--", "python", "manage.py", "shell", "-c", "print('hi there')"])
+    assert result.exit_code == 0, result.output
+    assert called["args"][:5] == ["ssh", "-p", "22", "-T", "pyvolt@1.2.3.4"]
+    assert called["args"][5] == "sites/shop.example.com/run python manage.py shell -c 'print('\"'\"'hi there'\"'\"')'"
+
+
+def test_run_needs_a_command(api):
+    result = runner.invoke(app, ["run", "-a", "shop"])
+    assert result.exit_code == 1
+    assert "after --" in result.output
+
+
+RUN_SERVERS = [{"id": 1, "name": "hetzy", "status": "ready", "ip_address": "1.2.3.4", "ssh_user": "pyvolt", "ssh_port": 22}]
+
+
+@pytest.fixture
+def in_repo(monkeypatch):
+    def at(url):
+        monkeypatch.setattr("pyvolt_cli.client._git_remote", lambda: url)
+    return at
+
+
+def test_run_without_app_uses_the_repo_folders_app(api, monkeypatch, in_repo):
+    in_repo("git@github.com:Acme/Shop.git")
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/servers").respond(200, json=RUN_SERVERS)
+    called = {}
+    monkeypatch.setattr("os.execvp", lambda prog, args: (called.update(args=args), (_ for _ in ()).throw(SystemExit(0))))
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ssh")
+    result = runner.invoke(app, ["run", "--", "python", "manage.py", "migrate"])
+    assert result.exit_code == 0, result.output
+    assert called["args"][-1] == "sites/shop.example.com/run python manage.py migrate"
+
+
+def test_env_list_without_app_in_repo_folder(api, in_repo):
+    in_repo("https://github.com/acme/blog")
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/11/env").respond(200, json=[{"key": "DEBUG", "value": "0", "is_secret": False}])
+    result = runner.invoke(app, ["env", "list"])
+    assert result.exit_code == 0, result.output
+    assert "DEBUG" in result.output
+    result = runner.invoke(app, ["env", "blog", "list"])  # the domain still works
+    assert result.exit_code == 0, result.output
+
+
+def test_ps_restart_without_app(api, in_repo):
+    in_repo("git@github.com:acme/shop.git")
+    api.get("/api/v1/apps").respond(200, json=APPS)
+    api.get("/api/v1/apps/12/processes").respond(200, json=[{"id": 5, "name": "worker", "kind": "worker", "state": "running", "exit": None, "command": "celery"}])
+    restart = api.post("/api/v1/apps/12/processes/5/restart").respond(200, json={})
+    result = runner.invoke(app, ["ps", "restart", "worker"])
+    assert result.exit_code == 0, result.output
+    assert restart.called
+
+
+def test_repo_that_deploys_two_apps_is_never_guessed(api, in_repo):
+    in_repo("git@github.com:acme/blog.git")
+    api.get("/api/v1/apps").respond(200, json=APPS + [{**APPS[0], "id": 13, "domain": "staging.blog.example.com"}])
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 1
+    assert "more than one app" in result.output
+
+
+def test_outside_a_repo_asks_for_the_domain(api, in_repo):
+    in_repo("")
+    result = runner.invoke(app, ["logs"])
+    assert result.exit_code == 1
+    assert "repo folder" in result.output
